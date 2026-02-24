@@ -16,25 +16,31 @@ func registerTaskRoutes(mux *http.ServeMux, store *Store, execCfg ExecutorConfig
 	mux.HandleFunc("POST /api/v1/tasks", handleCreateTask(store, execCfg))
 	mux.HandleFunc("GET /api/v1/tasks", handleListTasks(store))
 	mux.HandleFunc("GET /api/v1/tasks/{id}", handleGetTask(store))
+	mux.HandleFunc("PUT /api/v1/tasks/{id}", handleUpdateTask(store))
 	mux.HandleFunc("DELETE /api/v1/tasks/{id}", handleDeleteTask(store))
+	mux.HandleFunc("DELETE /api/v1/tasks", handleDeleteTasksByQueue(store))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/trigger", handleTriggerTask(store, execCfg))
 	mux.HandleFunc("GET /api/v1/tasks/{id}/executions", handleListExecutions(store))
 }
 
 type taskCreateRequest struct {
-	URL           string            `json:"url"`
-	Method        string            `json:"method"`
-	Headers       map[string]string `json:"headers"`
-	Body          *string           `json:"body"`
-	TimeoutMs     *int              `json:"timeout_ms"`
-	RetryAttempts *int              `json:"retry_attempts"`
-	Queue         *string           `json:"queue"`
-	CallbackURL   *string           `json:"callback_url"`
-	Cron          *string           `json:"cron"`
-	Delay         interface{}       `json:"delay"`
-	RunAt         *string           `json:"run_at"`
-	Name          *string           `json:"name"`
-	Enabled       *bool             `json:"enabled"`
+	URL                 string            `json:"url"`
+	Method              string            `json:"method"`
+	Headers             map[string]string `json:"headers"`
+	Body                *string           `json:"body"`
+	TimeoutMs           *int              `json:"timeout_ms"`
+	RetryAttempts       *int              `json:"retry_attempts"`
+	Queue               *string           `json:"queue"`
+	CallbackURL         *string           `json:"callback_url"`
+	Cron                *string           `json:"cron"`
+	Delay               interface{}       `json:"delay"`
+	RunAt               *string           `json:"run_at"`
+	Name                *string           `json:"name"`
+	Enabled             *bool             `json:"enabled"`
+	NotifyOnFailure     *bool             `json:"notify_on_failure"`
+	NotifyOnRecovery    *bool             `json:"notify_on_recovery"`
+	ExpectedStatusCodes *string           `json:"expected_status_codes"`
+	ExpectedBodyPattern *string           `json:"expected_body_pattern"`
 }
 
 func handleCreateTask(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
@@ -87,21 +93,25 @@ func createCronTask(w http.ResponseWriter, store *Store, req *taskCreateRequest)
 	}
 
 	task := &Task{
-		ID:             newTaskID(),
-		Name:           name,
-		URL:            req.URL,
-		Method:         method,
-		Headers:        req.Headers,
-		Body:           req.Body,
-		ScheduleType:   "cron",
-		CronExpression: req.Cron,
-		Enabled:        enabled,
-		TimeoutMs:      timeoutMs,
-		RetryAttempts:  retryAttempts,
-		Queue:          req.Queue,
-		CallbackURL:    req.CallbackURL,
-		InsertedAt:     now,
-		UpdatedAt:      now,
+		ID:                  newTaskID(),
+		Name:                name,
+		URL:                 req.URL,
+		Method:              method,
+		Headers:             req.Headers,
+		Body:                req.Body,
+		ScheduleType:        "cron",
+		CronExpression:      req.Cron,
+		Enabled:             enabled,
+		TimeoutMs:           timeoutMs,
+		RetryAttempts:       retryAttempts,
+		Queue:               req.Queue,
+		CallbackURL:         req.CallbackURL,
+		NotifyOnFailure:     req.NotifyOnFailure,
+		NotifyOnRecovery:    req.NotifyOnRecovery,
+		ExpectedStatusCodes: req.ExpectedStatusCodes,
+		ExpectedBodyPattern: req.ExpectedBodyPattern,
+		InsertedAt:          now,
+		UpdatedAt:           now,
 	}
 	if task.Headers == nil {
 		task.Headers = map[string]string{}
@@ -112,17 +122,7 @@ func createCronTask(w http.ResponseWriter, store *Store, req *taskCreateRequest)
 	logInbound("POST", "/api/v1/tasks", fmt.Sprintf("[%s created, cron]", task.ID))
 
 	writeJSON(w, 201, map[string]interface{}{
-		"data": map[string]interface{}{
-			"id":              task.ID,
-			"name":            task.Name,
-			"url":             task.URL,
-			"method":          task.Method,
-			"cron_expression": task.CronExpression,
-			"enabled":         task.Enabled,
-			"next_run_at":     task.NextRunAt,
-			"inserted_at":     task.InsertedAt,
-			"updated_at":      task.UpdatedAt,
-		},
+		"data":    taskToJSON(task),
 		"message": "Cron task created",
 	})
 }
@@ -228,21 +228,25 @@ func buildOnceTask(store *Store, req *taskCreateRequest, scheduledAt *string) (*
 	}
 
 	task := &Task{
-		ID:            newTaskID(),
-		Name:          name,
-		URL:           req.URL,
-		Method:        method,
-		Headers:       req.Headers,
-		Body:          req.Body,
-		ScheduleType:  "once",
-		ScheduledAt:   scheduledAtStr,
-		Enabled:       true,
-		TimeoutMs:     timeoutMs,
-		RetryAttempts: retryAttempts,
-		Queue:         req.Queue,
-		CallbackURL:   req.CallbackURL,
-		InsertedAt:    now,
-		UpdatedAt:     now,
+		ID:                  newTaskID(),
+		Name:                name,
+		URL:                 req.URL,
+		Method:              method,
+		Headers:             req.Headers,
+		Body:                req.Body,
+		ScheduleType:        "once",
+		ScheduledAt:         scheduledAtStr,
+		Enabled:             true,
+		TimeoutMs:           timeoutMs,
+		RetryAttempts:       retryAttempts,
+		Queue:               req.Queue,
+		CallbackURL:         req.CallbackURL,
+		NotifyOnFailure:     req.NotifyOnFailure,
+		NotifyOnRecovery:    req.NotifyOnRecovery,
+		ExpectedStatusCodes: req.ExpectedStatusCodes,
+		ExpectedBodyPattern: req.ExpectedBodyPattern,
+		InsertedAt:          now,
+		UpdatedAt:           now,
 	}
 	if task.Headers == nil {
 		task.Headers = map[string]string{}
@@ -267,10 +271,21 @@ func handleListTasks(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tasks := store.ListTasks()
 
+		// Filter by queue if provided
+		if q := r.URL.Query().Get("queue"); q != "" {
+			var filtered []*Task
+			for _, t := range tasks {
+				if t.Queue != nil && *t.Queue == q {
+					filtered = append(filtered, t)
+				}
+			}
+			tasks = filtered
+		}
+
 		limit := 50
 		offset := 0
 		if l := r.URL.Query().Get("limit"); l != "" {
-			if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
 				limit = v
 			}
 		}
@@ -323,6 +338,79 @@ func handleGetTask(store *Store) http.HandlerFunc {
 	}
 }
 
+func handleUpdateTask(store *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		task := store.GetTask(id)
+		if task == nil {
+			writeError(w, 404, "not_found", "Task not found")
+			return
+		}
+
+		var req taskCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, 400, "invalid_json", "Invalid JSON body")
+			return
+		}
+
+		store.UpdateTask(id, func(t *Task) {
+			if req.Name != nil {
+				t.Name = *req.Name
+			}
+			if req.URL != "" {
+				t.URL = req.URL
+			}
+			if req.Method != "" {
+				t.Method = strings.ToUpper(req.Method)
+			}
+			if req.Headers != nil {
+				t.Headers = req.Headers
+			}
+			if req.Body != nil {
+				t.Body = req.Body
+			}
+			if req.Cron != nil {
+				t.CronExpression = req.Cron
+			}
+			if req.Enabled != nil {
+				t.Enabled = *req.Enabled
+			}
+			if req.TimeoutMs != nil {
+				t.TimeoutMs = *req.TimeoutMs
+			}
+			if req.RetryAttempts != nil {
+				t.RetryAttempts = *req.RetryAttempts
+			}
+			if req.Queue != nil {
+				t.Queue = req.Queue
+			}
+			if req.CallbackURL != nil {
+				t.CallbackURL = req.CallbackURL
+			}
+			if req.NotifyOnFailure != nil {
+				t.NotifyOnFailure = req.NotifyOnFailure
+			}
+			if req.NotifyOnRecovery != nil {
+				t.NotifyOnRecovery = req.NotifyOnRecovery
+			}
+			if req.ExpectedStatusCodes != nil {
+				t.ExpectedStatusCodes = req.ExpectedStatusCodes
+			}
+			if req.ExpectedBodyPattern != nil {
+				t.ExpectedBodyPattern = req.ExpectedBodyPattern
+			}
+			t.UpdatedAt = nowISO()
+		})
+
+		task = store.GetTask(id)
+		logInbound("PUT", "/api/v1/tasks/"+id, "[updated]")
+
+		writeJSON(w, 200, map[string]interface{}{
+			"data": taskToJSON(task),
+		})
+	}
+}
+
 func handleDeleteTask(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -333,6 +421,28 @@ func handleDeleteTask(store *Store) http.HandlerFunc {
 
 		logInbound("DELETE", "/api/v1/tasks/"+id, "[deleted]")
 		w.WriteHeader(204)
+	}
+}
+
+func handleDeleteTasksByQueue(store *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		queue := r.URL.Query().Get("queue")
+		if queue == "" {
+			writeError(w, 400, "invalid_params", "queue parameter is required")
+			return
+		}
+
+		deleted := store.DeleteTasksByQueue(queue)
+
+		logInbound("DELETE", "/api/v1/tasks?queue="+queue, fmt.Sprintf("[%d deleted]", deleted))
+
+		writeJSON(w, 200, map[string]interface{}{
+			"data": map[string]interface{}{
+				"deleted": deleted,
+				"queue":   queue,
+			},
+			"message": fmt.Sprintf("Cancelled %d task(s) in queue %q", deleted, queue),
+		})
 	}
 }
 
@@ -378,7 +488,18 @@ func handleListExecutions(store *Store) http.HandlerFunc {
 			return
 		}
 
+		limit := 50
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+				limit = v
+			}
+		}
+
 		execs := store.ListExecutions(id)
+		if len(execs) > limit {
+			execs = execs[len(execs)-limit:]
+		}
+
 		data := make([]map[string]interface{}, len(execs))
 		for i, e := range execs {
 			data[i] = executionToJSON(e)
@@ -389,7 +510,7 @@ func handleListExecutions(store *Store) http.HandlerFunc {
 		writeJSON(w, 200, map[string]interface{}{
 			"data":     data,
 			"has_more": false,
-			"limit":    50,
+			"limit":    limit,
 			"offset":   0,
 		})
 	}
@@ -397,24 +518,27 @@ func handleListExecutions(store *Store) http.HandlerFunc {
 
 func taskToJSON(t *Task) map[string]interface{} {
 	return map[string]interface{}{
-		"id":                t.ID,
-		"name":              t.Name,
-		"url":               t.URL,
-		"method":            t.Method,
-		"headers":           t.Headers,
-		"body":              t.Body,
-		"schedule_type":     t.ScheduleType,
-		"cron_expression":   t.CronExpression,
-		"scheduled_at":      t.ScheduledAt,
-		"enabled":           t.Enabled,
-		"timeout_ms":        t.TimeoutMs,
-		"retry_attempts":    t.RetryAttempts,
-		"queue":             t.Queue,
-		"notify_on_failure": t.NotifyOnFailure,
-		"notify_on_recovery": t.NotifyOnRecovery,
-		"next_run_at":       t.NextRunAt,
-		"inserted_at":       t.InsertedAt,
-		"updated_at":        t.UpdatedAt,
+		"id":                    t.ID,
+		"name":                  t.Name,
+		"url":                   t.URL,
+		"method":                t.Method,
+		"headers":               t.Headers,
+		"body":                  t.Body,
+		"schedule_type":         t.ScheduleType,
+		"cron_expression":       t.CronExpression,
+		"scheduled_at":          t.ScheduledAt,
+		"enabled":               t.Enabled,
+		"timeout_ms":            t.TimeoutMs,
+		"retry_attempts":        t.RetryAttempts,
+		"queue":                 t.Queue,
+		"callback_url":          t.CallbackURL,
+		"notify_on_failure":     t.NotifyOnFailure,
+		"notify_on_recovery":    t.NotifyOnRecovery,
+		"expected_status_codes": t.ExpectedStatusCodes,
+		"expected_body_pattern": t.ExpectedBodyPattern,
+		"next_run_at":           t.NextRunAt,
+		"inserted_at":           t.InsertedAt,
+		"updated_at":            t.UpdatedAt,
 	}
 }
 

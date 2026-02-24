@@ -168,7 +168,7 @@ func TestInboundEventResponseMatchesSpec(t *testing.T) {
 	// Create endpoint directly in store
 	ep := &Endpoint{
 		ID: "ep_test1", Name: "Test", Slug: "test-slug",
-		ForwardURL: "http://localhost:9999", Enabled: true,
+		ForwardURLs: []string{"http://localhost:9999"}, Enabled: true,
 		InsertedAt: nowISO(), UpdatedAt: nowISO(),
 	}
 	store.CreateEndpoint(ep)

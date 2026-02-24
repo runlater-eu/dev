@@ -34,6 +34,7 @@ func main() {
 	fmt.Fprint(os.Stderr, c(colorGreen, banner))
 	fmt.Fprintf(os.Stderr, "  %s http://%s\n", c(colorDim, "Listening on"), addr)
 	fmt.Fprintf(os.Stderr, "  %s http://%s/in/{slug}\n", c(colorDim, "Inbound URL"), addr)
+	fmt.Fprintf(os.Stderr, "  %s http://%s/ping/{token}\n", c(colorDim, "Ping URL"), addr)
 	fmt.Fprintf(os.Stderr, "  %s any value accepted\n\n", c(colorDim, "API key"))
 
 	if err := http.ListenAndServe(addr, mux); err != nil {
@@ -46,7 +47,10 @@ func buildMux(store *Store, host string, execCfg ExecutorConfig) *http.ServeMux 
 	mux := http.NewServeMux()
 
 	registerTaskRoutes(mux, store, execCfg)
+	registerBatchRoutes(mux, store, execCfg)
 	registerEndpointRoutes(mux, store, host, execCfg)
+	registerQueueRoutes(mux, store)
+	registerMonitorRoutes(mux, store, host)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok"})

@@ -12,7 +12,10 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-func newTaskID() string    { return fmt.Sprintf("t_%s", randomHex(6)) }
-func newExecID() string    { return fmt.Sprintf("ex_%s", randomHex(6)) }
+func newTaskID() string     { return fmt.Sprintf("t_%s", randomHex(6)) }
+func newExecID() string     { return fmt.Sprintf("ex_%s", randomHex(6)) }
 func newEndpointID() string { return fmt.Sprintf("ep_%s", randomHex(6)) }
-func newEventID() string   { return fmt.Sprintf("ev_%s", randomHex(6)) }
+func newEventID() string    { return fmt.Sprintf("ev_%s", randomHex(6)) }
+func newMonitorID() string  { return fmt.Sprintf("mon_%s", randomHex(6)) }
+func newPingID() string     { return fmt.Sprintf("pg_%s", randomHex(6)) }
+func newPingToken() string  { return randomHex(16) }

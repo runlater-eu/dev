@@ -70,7 +70,7 @@ func TestStoreEndpointCRUD(t *testing.T) {
 
 	ep := &Endpoint{
 		ID: "ep_test1", Name: "Stripe", Slug: "stripe-abc",
-		ForwardURL: "http://localhost:3000/webhook", Enabled: true,
+		ForwardURLs: []string{"http://localhost:3000/webhook"}, Enabled: true,
 		InsertedAt: nowISO(), UpdatedAt: nowISO(),
 	}
 	s.CreateEndpoint(ep)

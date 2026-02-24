@@ -51,8 +51,9 @@ func TestCreateEndpoint(t *testing.T) {
 	if data["slug"] != "stripe-test" {
 		t.Errorf("expected slug stripe-test, got %v", data["slug"])
 	}
-	if data["forward_url"] != "http://localhost:3000/webhook" {
-		t.Errorf("unexpected forward_url: %v", data["forward_url"])
+	forwardURLs, ok := data["forward_urls"].([]interface{})
+	if !ok || len(forwardURLs) != 1 || forwardURLs[0] != "http://localhost:3000/webhook" {
+		t.Errorf("unexpected forward_urls: %v", data["forward_urls"])
 	}
 	if data["inbound_url"] != "http://localhost:8080/in/stripe-test" {
 		t.Errorf("unexpected inbound_url: %v", data["inbound_url"])
@@ -178,7 +179,7 @@ func TestInboundWebhookForward(t *testing.T) {
 		ID:         newEndpointID(),
 		Name:       "Test",
 		Slug:       "stripe-hook",
-		ForwardURL: target.URL,
+		ForwardURLs: []string{target.URL},
 		Enabled:    true,
 		InsertedAt: nowISO(),
 		UpdatedAt:  nowISO(),
@@ -244,7 +245,7 @@ func TestInboundWebhookDisabled(t *testing.T) {
 		ID:         newEndpointID(),
 		Name:       "Disabled",
 		Slug:       "disabled-ep",
-		ForwardURL: "http://localhost:3000",
+		ForwardURLs: []string{"http://localhost:3000"},
 		Enabled:    false,
 		InsertedAt: nowISO(),
 		UpdatedAt:  nowISO(),
@@ -267,7 +268,7 @@ func TestListEvents(t *testing.T) {
 		ID:         "ep_test1",
 		Name:       "Test",
 		Slug:       "test-events",
-		ForwardURL: "http://localhost:3000",
+		ForwardURLs: []string{"http://localhost:3000"},
 		Enabled:    true,
 		InsertedAt: nowISO(),
 		UpdatedAt:  nowISO(),

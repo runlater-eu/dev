@@ -12,21 +12,34 @@ func registerEndpointRoutes(mux *http.ServeMux, store *Store, host string, execC
 	mux.HandleFunc("POST /api/v1/endpoints", handleCreateEndpoint(store, host))
 	mux.HandleFunc("GET /api/v1/endpoints", handleListEndpoints(store))
 	mux.HandleFunc("GET /api/v1/endpoints/{id}", handleGetEndpoint(store))
+	mux.HandleFunc("PUT /api/v1/endpoints/{id}", handleUpdateEndpoint(store, host))
 	mux.HandleFunc("DELETE /api/v1/endpoints/{id}", handleDeleteEndpoint(store))
 	mux.HandleFunc("GET /api/v1/endpoints/{id}/events", handleListEvents(store))
+	mux.HandleFunc("POST /api/v1/endpoints/{id}/events/{event_id}/replay", handleReplayEvent(store, execCfg))
 
-	mux.HandleFunc("POST /in/{slug}", handleInbound(store, execCfg))
+	mux.HandleFunc("/in/{slug}", handleInbound(store, execCfg))
 }
 
 type endpointCreateRequest struct {
-	Name             string `json:"name"`
-	Slug             string `json:"slug"`
-	ForwardURL       string `json:"forward_url"`
-	Enabled          *bool  `json:"enabled"`
-	RetryAttempts    *int   `json:"retry_attempts"`
-	UseQueue         *bool  `json:"use_queue"`
-	NotifyOnFailure  *bool  `json:"notify_on_failure"`
-	NotifyOnRecovery *bool  `json:"notify_on_recovery"`
+	Name             string   `json:"name"`
+	Slug             string   `json:"slug"`
+	ForwardURLs      []string `json:"forward_urls"`
+	ForwardURL       string   `json:"forward_url"` // backward compat
+	Enabled          *bool    `json:"enabled"`
+	RetryAttempts    *int     `json:"retry_attempts"`
+	UseQueue         *bool    `json:"use_queue"`
+	NotifyOnFailure  *bool    `json:"notify_on_failure"`
+	NotifyOnRecovery *bool    `json:"notify_on_recovery"`
+}
+
+func normalizeForwardURLs(req *endpointCreateRequest) []string {
+	if len(req.ForwardURLs) > 0 {
+		return req.ForwardURLs
+	}
+	if req.ForwardURL != "" {
+		return []string{req.ForwardURL}
+	}
+	return nil
 }
 
 func handleCreateEndpoint(store *Store, host string) http.HandlerFunc {
@@ -37,8 +50,9 @@ func handleCreateEndpoint(store *Store, host string) http.HandlerFunc {
 			return
 		}
 
-		if req.ForwardURL == "" {
-			writeError(w, 422, "validation_error", "forward_url is required")
+		forwardURLs := normalizeForwardURLs(&req)
+		if len(forwardURLs) == 0 {
+			writeError(w, 422, "validation_error", "forward_urls is required")
 			return
 		}
 
@@ -55,11 +69,11 @@ func handleCreateEndpoint(store *Store, host string) http.HandlerFunc {
 		if req.Enabled != nil {
 			enabled = *req.Enabled
 		}
-		retryAttempts := 0
+		retryAttempts := 5
 		if req.RetryAttempts != nil {
 			retryAttempts = *req.RetryAttempts
 		}
-		useQueue := false
+		useQueue := true
 		if req.UseQueue != nil {
 			useQueue = *req.UseQueue
 		}
@@ -75,7 +89,7 @@ func handleCreateEndpoint(store *Store, host string) http.HandlerFunc {
 			Name:             name,
 			Slug:             slug,
 			InboundURL:       fmt.Sprintf("http://%s/in/%s", host, slug),
-			ForwardURL:       req.ForwardURL,
+			ForwardURLs:      forwardURLs,
 			Enabled:          enabled,
 			RetryAttempts:    retryAttempts,
 			UseQueue:         useQueue,
@@ -89,6 +103,56 @@ func handleCreateEndpoint(store *Store, host string) http.HandlerFunc {
 		logInbound("POST", "/api/v1/endpoints", fmt.Sprintf("[%s created, slug=%s]", ep.ID, ep.Slug))
 
 		writeJSON(w, 201, map[string]interface{}{
+			"data": endpointToJSON(ep),
+		})
+	}
+}
+
+func handleUpdateEndpoint(store *Store, host string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		ep := store.GetEndpoint(id)
+		if ep == nil {
+			writeError(w, 404, "not_found", "Endpoint not found")
+			return
+		}
+
+		var req endpointCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, 400, "invalid_json", "Invalid JSON body")
+			return
+		}
+
+		store.UpdateEndpoint(id, func(ep *Endpoint) {
+			if req.Name != "" {
+				ep.Name = req.Name
+			}
+			forwardURLs := normalizeForwardURLs(&req)
+			if len(forwardURLs) > 0 {
+				ep.ForwardURLs = forwardURLs
+			}
+			if req.Enabled != nil {
+				ep.Enabled = *req.Enabled
+			}
+			if req.RetryAttempts != nil {
+				ep.RetryAttempts = *req.RetryAttempts
+			}
+			if req.UseQueue != nil {
+				ep.UseQueue = *req.UseQueue
+			}
+			if req.NotifyOnFailure != nil {
+				ep.NotifyOnFailure = req.NotifyOnFailure
+			}
+			if req.NotifyOnRecovery != nil {
+				ep.NotifyOnRecovery = req.NotifyOnRecovery
+			}
+			ep.UpdatedAt = nowISO()
+		})
+
+		ep = store.GetEndpoint(id)
+		logInbound("PUT", "/api/v1/endpoints/"+id, "[updated]")
+
+		writeJSON(w, 200, map[string]interface{}{
 			"data": endpointToJSON(ep),
 		})
 	}
@@ -176,7 +240,19 @@ func handleListEvents(store *Store) http.HandlerFunc {
 			return
 		}
 
+		limit := 50
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+				limit = v
+			}
+		}
+
 		events := store.ListEvents(id)
+		// Return most recent first, limited
+		if len(events) > limit {
+			events = events[len(events)-limit:]
+		}
+
 		data := make([]map[string]interface{}, len(events))
 		for i, ev := range events {
 			data[i] = eventToJSON(ev)
@@ -187,8 +263,80 @@ func handleListEvents(store *Store) http.HandlerFunc {
 		writeJSON(w, 200, map[string]interface{}{
 			"data":     data,
 			"has_more": false,
-			"limit":    50,
+			"limit":    limit,
 			"offset":   0,
+		})
+	}
+}
+
+func handleReplayEvent(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		epID := r.PathValue("id")
+		eventID := r.PathValue("event_id")
+
+		ep := store.GetEndpoint(epID)
+		if ep == nil {
+			writeError(w, 404, "not_found", "Endpoint not found")
+			return
+		}
+
+		event := store.GetEvent(epID, eventID)
+		if event == nil {
+			writeError(w, 404, "not_found", "Event not found")
+			return
+		}
+
+		logInbound("POST", fmt.Sprintf("/api/v1/endpoints/%s/events/%s/replay", epID, eventID), "[replaying]")
+
+		// Create new forwarding executions for each forward URL
+		type execResult struct {
+			ExecutionID  string `json:"execution_id"`
+			Status       string `json:"status"`
+			ScheduledFor string `json:"scheduled_for"`
+		}
+		var results []execResult
+
+		for _, fwdURL := range ep.ForwardURLs {
+			now := nowISO()
+			taskID := newTaskID()
+			exec := &Execution{
+				ID:           newExecID(),
+				Status:       "pending",
+				ScheduledFor: now,
+				Attempt:      1,
+			}
+
+			// Create a temporary task for the forward
+			task := &Task{
+				ID:       taskID,
+				Name:     fmt.Sprintf("Replay: %s -> %s", event.ID, fwdURL),
+				URL:      fwdURL,
+				Method:   event.Method,
+				Enabled:  true,
+				TimeoutMs: 30000,
+				InsertedAt: now,
+				UpdatedAt:  now,
+			}
+			if task.Headers == nil {
+				task.Headers = map[string]string{}
+			}
+			store.CreateTask(task)
+			store.AddExecution(taskID, exec)
+
+			go executeTask(store, task, exec.ID, execCfg)
+
+			results = append(results, execResult{
+				ExecutionID:  exec.ID,
+				Status:       "pending",
+				ScheduledFor: now,
+			})
+		}
+
+		writeJSON(w, 202, map[string]interface{}{
+			"data": map[string]interface{}{
+				"executions": results,
+			},
+			"message": fmt.Sprintf("Event replayed to %d destination(s)", len(results)),
 		})
 	}
 }
@@ -215,18 +363,30 @@ func handleInbound(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
 			sourceIP = fwd
 		}
 
+		// Create task IDs for each forward URL
+		var taskIDs []string
+		for _, fwdURL := range ep.ForwardURLs {
+			taskID := newTaskID()
+			taskIDs = append(taskIDs, taskID)
+
+			logInbound(r.Method, "/in/"+slug, fmt.Sprintf("[%s forwarding -> %s]", taskID, fwdURL))
+
+			// Forward in background
+			go executeForward(r.Method, fwdURL, r.Header, body, execCfg)
+		}
+
+		// Determine aggregate status
+		status := "pending"
+
 		event := &InboundEvent{
 			ID:         newEventID(),
 			Method:     r.Method,
 			SourceIP:   sourceIP,
 			ReceivedAt: nowISO(),
+			TaskIDs:    taskIDs,
+			Status:     &status,
 		}
 		store.AddEvent(ep.ID, event)
-
-		logInbound("POST", "/in/"+slug, fmt.Sprintf("[%s forwarding -> %s]", event.ID, ep.ForwardURL))
-
-		// Forward in background
-		go executeForward(r.Method, ep.ForwardURL, r.Header, body, execCfg)
 
 		writeJSON(w, 200, map[string]interface{}{
 			"id":     event.ID,
@@ -241,11 +401,11 @@ func endpointToJSON(ep *Endpoint) map[string]interface{} {
 		"name":              ep.Name,
 		"slug":              ep.Slug,
 		"inbound_url":       ep.InboundURL,
-		"forward_url":       ep.ForwardURL,
+		"forward_urls":      ep.ForwardURLs,
 		"enabled":           ep.Enabled,
 		"retry_attempts":    ep.RetryAttempts,
 		"use_queue":         ep.UseQueue,
-		"notify_on_failure": ep.NotifyOnFailure,
+		"notify_on_failure":  ep.NotifyOnFailure,
 		"notify_on_recovery": ep.NotifyOnRecovery,
 		"inserted_at":       ep.InsertedAt,
 		"updated_at":        ep.UpdatedAt,
@@ -254,11 +414,11 @@ func endpointToJSON(ep *Endpoint) map[string]interface{} {
 
 func eventToJSON(ev *InboundEvent) map[string]interface{} {
 	return map[string]interface{}{
-		"id":               ev.ID,
-		"method":           ev.Method,
-		"source_ip":        ev.SourceIP,
-		"received_at":      ev.ReceivedAt,
-		"execution_id":     ev.ExecutionID,
-		"execution_status": ev.ExecutionStatus,
+		"id":          ev.ID,
+		"method":      ev.Method,
+		"source_ip":   ev.SourceIP,
+		"received_at": ev.ReceivedAt,
+		"task_ids":    ev.TaskIDs,
+		"status":      ev.Status,
 	}
 }
