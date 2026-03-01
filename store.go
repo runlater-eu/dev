@@ -23,6 +23,8 @@ type Task struct {
 	CallbackURL         *string           `json:"callback_url"`
 	NotifyOnFailure     *bool             `json:"notify_on_failure"`
 	NotifyOnRecovery    *bool             `json:"notify_on_recovery"`
+	OnFailureURL        *string           `json:"on_failure_url"`
+	OnRecoveryURL       *string           `json:"on_recovery_url"`
 	ExpectedStatusCodes *string           `json:"expected_status_codes"`
 	ExpectedBodyPattern *string           `json:"expected_body_pattern"`
 	NextRunAt           *string           `json:"next_run_at"`
@@ -46,18 +48,23 @@ type Execution struct {
 
 // Endpoint represents an inbound webhook endpoint.
 type Endpoint struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name"`
-	Slug             string   `json:"slug"`
-	InboundURL       string   `json:"inbound_url"`
-	ForwardURLs      []string `json:"forward_urls"`
-	Enabled          bool     `json:"enabled"`
-	RetryAttempts    int      `json:"retry_attempts"`
-	UseQueue         bool     `json:"use_queue"`
-	NotifyOnFailure  *bool    `json:"notify_on_failure"`
-	NotifyOnRecovery *bool    `json:"notify_on_recovery"`
-	InsertedAt       string   `json:"inserted_at"`
-	UpdatedAt        string   `json:"updated_at"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Slug             string            `json:"slug"`
+	InboundURL       string            `json:"inbound_url"`
+	ForwardURLs      []string          `json:"forward_urls"`
+	Enabled          bool              `json:"enabled"`
+	RetryAttempts    int               `json:"retry_attempts"`
+	UseQueue         bool              `json:"use_queue"`
+	NotifyOnFailure  *bool             `json:"notify_on_failure"`
+	NotifyOnRecovery *bool             `json:"notify_on_recovery"`
+	OnFailureURL     *string           `json:"on_failure_url"`
+	OnRecoveryURL    *string           `json:"on_recovery_url"`
+	ForwardHeaders   map[string]string `json:"forward_headers"`
+	ForwardBody      *string           `json:"forward_body"`
+	ForwardMethod    *string           `json:"forward_method"`
+	InsertedAt       string            `json:"inserted_at"`
+	UpdatedAt        string            `json:"updated_at"`
 }
 
 // InboundEvent represents a received inbound webhook event.
@@ -82,6 +89,8 @@ type Monitor struct {
 	Enabled             bool    `json:"enabled"`
 	NotifyOnFailure     *bool   `json:"notify_on_failure"`
 	NotifyOnRecovery    *bool   `json:"notify_on_recovery"`
+	OnFailureURL        *string `json:"on_failure_url"`
+	OnRecoveryURL       *string `json:"on_recovery_url"`
 	PingToken           string  `json:"ping_token"`
 	PingURL             string  `json:"ping_url"`
 	Status              string  `json:"status"`
