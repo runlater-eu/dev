@@ -21,15 +21,17 @@ func registerEndpointRoutes(mux *http.ServeMux, store *Store, host string, execC
 }
 
 type endpointCreateRequest struct {
-	Name             string   `json:"name"`
-	Slug             string   `json:"slug"`
-	ForwardURLs      []string `json:"forward_urls"`
-	ForwardURL       string   `json:"forward_url"` // backward compat
-	Enabled          *bool    `json:"enabled"`
-	RetryAttempts    *int     `json:"retry_attempts"`
-	UseQueue         *bool    `json:"use_queue"`
-	NotifyOnFailure  *bool    `json:"notify_on_failure"`
-	NotifyOnRecovery *bool    `json:"notify_on_recovery"`
+	Name             string            `json:"name"`
+	Slug             string            `json:"slug"`
+	ForwardURLs      []string          `json:"forward_urls"`
+	ForwardURL       string            `json:"forward_url"` // backward compat
+	Enabled          *bool             `json:"enabled"`
+	RetryAttempts    *int              `json:"retry_attempts"`
+	UseQueue         *bool             `json:"use_queue"`
+	NotifyOnFailure  *bool             `json:"notify_on_failure"`
+	NotifyOnRecovery *bool             `json:"notify_on_recovery"`
+	Script           *string           `json:"script"`
+	Secrets          map[string]string `json:"secrets"`
 }
 
 func normalizeForwardURLs(req *endpointCreateRequest) []string {
@@ -95,6 +97,8 @@ func handleCreateEndpoint(store *Store, host string) http.HandlerFunc {
 			UseQueue:         useQueue,
 			NotifyOnFailure:  req.NotifyOnFailure,
 			NotifyOnRecovery: req.NotifyOnRecovery,
+			Script:           req.Script,
+			Secrets:          req.Secrets,
 			InsertedAt:       now,
 			UpdatedAt:        now,
 		}
@@ -145,6 +149,21 @@ func handleUpdateEndpoint(store *Store, host string) http.HandlerFunc {
 			}
 			if req.NotifyOnRecovery != nil {
 				ep.NotifyOnRecovery = req.NotifyOnRecovery
+			}
+			if req.Script != nil {
+				ep.Script = req.Script
+			}
+			if req.Secrets != nil {
+				if ep.Secrets == nil {
+					ep.Secrets = make(map[string]string)
+				}
+				for k, v := range req.Secrets {
+					if v == "" {
+						delete(ep.Secrets, k)
+					} else {
+						ep.Secrets[k] = v
+					}
+				}
 			}
 			ep.UpdatedAt = nowISO()
 		})
@@ -396,20 +415,28 @@ func handleInbound(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
 }
 
 func endpointToJSON(ep *Endpoint) map[string]interface{} {
-	return map[string]interface{}{
-		"id":                ep.ID,
-		"name":              ep.Name,
-		"slug":              ep.Slug,
-		"inbound_url":       ep.InboundURL,
-		"forward_urls":      ep.ForwardURLs,
-		"enabled":           ep.Enabled,
-		"retry_attempts":    ep.RetryAttempts,
-		"use_queue":         ep.UseQueue,
+	secretsKeys := make([]string, 0)
+	for k := range ep.Secrets {
+		secretsKeys = append(secretsKeys, k)
+	}
+
+	result := map[string]interface{}{
+		"id":                 ep.ID,
+		"name":               ep.Name,
+		"slug":               ep.Slug,
+		"inbound_url":        ep.InboundURL,
+		"forward_urls":       ep.ForwardURLs,
+		"enabled":            ep.Enabled,
+		"retry_attempts":     ep.RetryAttempts,
+		"use_queue":          ep.UseQueue,
 		"notify_on_failure":  ep.NotifyOnFailure,
 		"notify_on_recovery": ep.NotifyOnRecovery,
-		"inserted_at":       ep.InsertedAt,
-		"updated_at":        ep.UpdatedAt,
+		"script":             ep.Script,
+		"secrets_keys":       secretsKeys,
+		"inserted_at":        ep.InsertedAt,
+		"updated_at":         ep.UpdatedAt,
 	}
+	return result
 }
 
 func eventToJSON(ev *InboundEvent) map[string]interface{} {

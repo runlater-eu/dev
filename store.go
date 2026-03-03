@@ -63,6 +63,8 @@ type Endpoint struct {
 	ForwardHeaders   map[string]string `json:"forward_headers"`
 	ForwardBody      *string           `json:"forward_body"`
 	ForwardMethod    *string           `json:"forward_method"`
+	Script           *string           `json:"script"`
+	Secrets          map[string]string `json:"-"`
 	InsertedAt       string            `json:"inserted_at"`
 	UpdatedAt        string            `json:"updated_at"`
 }
