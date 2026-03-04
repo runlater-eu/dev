@@ -27,6 +27,7 @@ type Task struct {
 	OnRecoveryURL       *string           `json:"on_recovery_url"`
 	ExpectedStatusCodes *string           `json:"expected_status_codes"`
 	ExpectedBodyPattern *string           `json:"expected_body_pattern"`
+	Script              *string           `json:"script"`
 	NextRunAt           *string           `json:"next_run_at"`
 	InsertedAt          string            `json:"inserted_at"`
 	UpdatedAt           string            `json:"updated_at"`
@@ -42,8 +43,9 @@ type Execution struct {
 	FinishedAt   *string `json:"finished_at"`
 	StatusCode   *int    `json:"status_code"`
 	DurationMs   *int    `json:"duration_ms"`
-	ErrorMessage *string `json:"error_message"`
-	Attempt      int     `json:"attempt"`
+	ErrorMessage *string   `json:"error_message"`
+	Attempt      int      `json:"attempt"`
+	ScriptLogs   []string `json:"script_logs"`
 }
 
 // Endpoint represents an inbound webhook endpoint.

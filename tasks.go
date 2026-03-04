@@ -41,6 +41,7 @@ type taskCreateRequest struct {
 	NotifyOnRecovery    *bool             `json:"notify_on_recovery"`
 	ExpectedStatusCodes *string           `json:"expected_status_codes"`
 	ExpectedBodyPattern *string           `json:"expected_body_pattern"`
+	Script              *string           `json:"script"`
 }
 
 func handleCreateTask(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
@@ -110,6 +111,7 @@ func createCronTask(w http.ResponseWriter, store *Store, req *taskCreateRequest)
 		NotifyOnRecovery:    req.NotifyOnRecovery,
 		ExpectedStatusCodes: req.ExpectedStatusCodes,
 		ExpectedBodyPattern: req.ExpectedBodyPattern,
+		Script:              req.Script,
 		InsertedAt:          now,
 		UpdatedAt:           now,
 	}
@@ -245,6 +247,7 @@ func buildOnceTask(store *Store, req *taskCreateRequest, scheduledAt *string) (*
 		NotifyOnRecovery:    req.NotifyOnRecovery,
 		ExpectedStatusCodes: req.ExpectedStatusCodes,
 		ExpectedBodyPattern: req.ExpectedBodyPattern,
+		Script:              req.Script,
 		InsertedAt:          now,
 		UpdatedAt:           now,
 	}
@@ -399,6 +402,9 @@ func handleUpdateTask(store *Store) http.HandlerFunc {
 			if req.ExpectedBodyPattern != nil {
 				t.ExpectedBodyPattern = req.ExpectedBodyPattern
 			}
+			if req.Script != nil {
+				t.Script = req.Script
+			}
 			t.UpdatedAt = nowISO()
 		})
 
@@ -536,6 +542,7 @@ func taskToJSON(t *Task) map[string]interface{} {
 		"notify_on_recovery":    t.NotifyOnRecovery,
 		"expected_status_codes": t.ExpectedStatusCodes,
 		"expected_body_pattern": t.ExpectedBodyPattern,
+		"script":                t.Script,
 		"next_run_at":           t.NextRunAt,
 		"inserted_at":           t.InsertedAt,
 		"updated_at":            t.UpdatedAt,
@@ -543,6 +550,10 @@ func taskToJSON(t *Task) map[string]interface{} {
 }
 
 func executionToJSON(e *Execution) map[string]interface{} {
+	logs := e.ScriptLogs
+	if logs == nil {
+		logs = []string{}
+	}
 	return map[string]interface{}{
 		"id":            e.ID,
 		"status":        e.Status,
@@ -553,6 +564,7 @@ func executionToJSON(e *Execution) map[string]interface{} {
 		"duration_ms":   e.DurationMs,
 		"error_message": e.ErrorMessage,
 		"attempt":       e.Attempt,
+		"script_logs":   logs,
 	}
 }
 
