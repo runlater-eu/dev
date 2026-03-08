@@ -376,7 +376,7 @@ func handleInbound(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
 		}
 
 		if !ep.Enabled {
-			writeJSON(w, 410, map[string]interface{}{
+			writeJSON(w, 503, map[string]interface{}{
 				"error": "Endpoint disabled",
 			})
 			return
