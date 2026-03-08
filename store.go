@@ -35,17 +35,18 @@ type Task struct {
 
 // Execution represents a single run of a task.
 type Execution struct {
-	ID           string  `json:"id"`
-	TaskID       string  `json:"-"`
-	Status       string  `json:"status"`
-	ScheduledFor string  `json:"scheduled_for"`
-	StartedAt    *string `json:"started_at"`
-	FinishedAt   *string `json:"finished_at"`
-	StatusCode   *int    `json:"status_code"`
-	DurationMs   *int    `json:"duration_ms"`
-	ErrorMessage *string   `json:"error_message"`
+	ID           string   `json:"id"`
+	TaskID       string   `json:"-"`
+	Status       string   `json:"status"`
+	ScheduledFor string   `json:"scheduled_for"`
+	StartedAt    *string  `json:"started_at"`
+	FinishedAt   *string  `json:"finished_at"`
+	StatusCode   *int     `json:"status_code"`
+	DurationMs   *int     `json:"duration_ms"`
+	ErrorMessage *string  `json:"error_message"`
 	Attempt      int      `json:"attempt"`
 	ScriptLogs   []string `json:"script_logs"`
+	DebounceKey  *string  `json:"debounce_key"`
 }
 
 // Endpoint represents an inbound webhook endpoint.
@@ -58,6 +59,7 @@ type Endpoint struct {
 	Enabled          bool              `json:"enabled"`
 	RetryAttempts    int               `json:"retry_attempts"`
 	UseQueue         bool              `json:"use_queue"`
+	Paused           bool              `json:"paused"`
 	NotifyOnFailure  *bool             `json:"notify_on_failure"`
 	NotifyOnRecovery *bool             `json:"notify_on_recovery"`
 	OnFailureURL     *string           `json:"on_failure_url"`
@@ -246,6 +248,30 @@ func (s *Store) UpdateExecution(taskID, execID string, fn func(*Execution)) {
 			return
 		}
 	}
+}
+
+// DeletePendingDebounced removes pending executions with the given debounce key
+// across all tasks in the given queue. Returns the number deleted.
+func (s *Store) DeletePendingDebounced(queue, debounceKey string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deleted := 0
+	for taskID, execs := range s.executions {
+		task := s.tasks[taskID]
+		if task == nil || task.Queue == nil || *task.Queue != queue {
+			continue
+		}
+		var kept []*Execution
+		for _, ex := range execs {
+			if ex.DebounceKey != nil && *ex.DebounceKey == debounceKey && ex.Status == "pending" {
+				deleted++
+			} else {
+				kept = append(kept, ex)
+			}
+		}
+		s.executions[taskID] = kept
+	}
+	return deleted
 }
 
 // Endpoint operations

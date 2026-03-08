@@ -16,6 +16,8 @@ func registerEndpointRoutes(mux *http.ServeMux, store *Store, host string, execC
 	mux.HandleFunc("DELETE /api/v1/endpoints/{id}", handleDeleteEndpoint(store))
 	mux.HandleFunc("GET /api/v1/endpoints/{id}/events", handleListEvents(store))
 	mux.HandleFunc("POST /api/v1/endpoints/{id}/events/{event_id}/replay", handleReplayEvent(store, execCfg))
+	mux.HandleFunc("POST /api/v1/endpoints/{id}/pause", handlePauseEndpoint(store))
+	mux.HandleFunc("POST /api/v1/endpoints/{id}/resume", handleResumeEndpoint(store))
 
 	mux.HandleFunc("/in/{slug}", handleInbound(store, execCfg))
 }
@@ -28,6 +30,7 @@ type endpointCreateRequest struct {
 	Enabled          *bool             `json:"enabled"`
 	RetryAttempts    *int              `json:"retry_attempts"`
 	UseQueue         *bool             `json:"use_queue"`
+	Paused           *bool             `json:"paused"`
 	NotifyOnFailure  *bool             `json:"notify_on_failure"`
 	NotifyOnRecovery *bool             `json:"notify_on_recovery"`
 	Script           *string           `json:"script"`
@@ -143,6 +146,9 @@ func handleUpdateEndpoint(store *Store, host string) http.HandlerFunc {
 			}
 			if req.UseQueue != nil {
 				ep.UseQueue = *req.UseQueue
+			}
+			if req.Paused != nil {
+				ep.Paused = *req.Paused
 			}
 			if req.NotifyOnFailure != nil {
 				ep.NotifyOnFailure = req.NotifyOnFailure
@@ -407,9 +413,56 @@ func handleInbound(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
 		}
 		store.AddEvent(ep.ID, event)
 
+		// Determine response status based on pause state
+		responseStatus := "received"
+		if ep.Paused {
+			responseStatus = "queued"
+		}
+
 		writeJSON(w, 200, map[string]interface{}{
 			"id":     event.ID,
-			"status": "received",
+			"status": responseStatus,
+		})
+	}
+}
+
+func handlePauseEndpoint(store *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		ep := store.GetEndpoint(id)
+		if ep == nil {
+			writeError(w, 404, "not_found", "Endpoint not found")
+			return
+		}
+		store.UpdateEndpoint(id, func(ep *Endpoint) {
+			ep.Paused = true
+			ep.UseQueue = true
+			ep.UpdatedAt = nowISO()
+		})
+		ep = store.GetEndpoint(id)
+		logInbound("POST", "/api/v1/endpoints/"+id+"/pause", "[paused]")
+		writeJSON(w, 200, map[string]interface{}{
+			"data": endpointToJSON(ep),
+		})
+	}
+}
+
+func handleResumeEndpoint(store *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		ep := store.GetEndpoint(id)
+		if ep == nil {
+			writeError(w, 404, "not_found", "Endpoint not found")
+			return
+		}
+		store.UpdateEndpoint(id, func(ep *Endpoint) {
+			ep.Paused = false
+			ep.UpdatedAt = nowISO()
+		})
+		ep = store.GetEndpoint(id)
+		logInbound("POST", "/api/v1/endpoints/"+id+"/resume", "[resumed]")
+		writeJSON(w, 200, map[string]interface{}{
+			"data": endpointToJSON(ep),
 		})
 	}
 }
@@ -427,6 +480,7 @@ func endpointToJSON(ep *Endpoint) map[string]interface{} {
 		"inbound_url":        ep.InboundURL,
 		"forward_urls":       ep.ForwardURLs,
 		"enabled":            ep.Enabled,
+		"paused":             ep.Paused,
 		"retry_attempts":     ep.RetryAttempts,
 		"use_queue":          ep.UseQueue,
 		"notify_on_failure":  ep.NotifyOnFailure,
