@@ -27,7 +27,8 @@ func main() {
 	}
 
 	store := NewStore()
-	mux := buildMux(store, fmt.Sprintf("localhost:%d", *port), defaultExecutorConfig)
+	mqStore := NewMqStore()
+	mux := buildMux(store, mqStore, fmt.Sprintf("localhost:%d", *port), defaultExecutorConfig)
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)
 
@@ -43,7 +44,7 @@ func main() {
 	}
 }
 
-func buildMux(store *Store, host string, execCfg ExecutorConfig) *http.ServeMux {
+func buildMux(store *Store, mqStore *MqStore, host string, execCfg ExecutorConfig) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	registerTaskRoutes(mux, store, execCfg)
@@ -51,6 +52,7 @@ func buildMux(store *Store, host string, execCfg ExecutorConfig) *http.ServeMux 
 	registerEndpointRoutes(mux, store, host, execCfg)
 	registerLaneRoutes(mux, store)
 	registerMonitorRoutes(mux, store, host)
+	registerMqRoutes(mux, mqStore)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok"})
