@@ -49,7 +49,7 @@ func buildMux(store *Store, host string, execCfg ExecutorConfig) *http.ServeMux 
 	registerTaskRoutes(mux, store, execCfg)
 	registerBatchRoutes(mux, store, execCfg)
 	registerEndpointRoutes(mux, store, host, execCfg)
-	registerQueueRoutes(mux, store)
+	registerLaneRoutes(mux, store)
 	registerMonitorRoutes(mux, store, host)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

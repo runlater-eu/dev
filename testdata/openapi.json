@@ -13,7 +13,7 @@
           "retry_attempts": 5,
           "slug": "ep_abc123def456ghi789jkl012mno345",
           "updated_at": "2026-01-29T10:00:00Z",
-          "use_queue": true,
+          "use_lane": true,
           "forward_urls": [
             "https://myapp.com/webhooks/stripe"
           ]
@@ -67,9 +67,9 @@
             "format": "date-time",
             "type": "string"
           },
-          "use_queue": {
+          "use_lane": {
             "default": true,
-            "description": "Whether to use a named queue for serial execution",
+            "description": "Whether to use a named lane for serial execution",
             "type": "boolean"
           },
           "forward_urls": {
@@ -96,7 +96,7 @@
           "forward_url": "https://myapp.com/webhooks/stripe",
           "name": "Stripe webhooks",
           "retry_attempts": 5,
-          "use_queue": true
+          "use_lane": true
         },
         "properties": {
           "enabled": {
@@ -127,9 +127,9 @@
             "description": "Number of retry attempts for forwarding (0-10)",
             "type": "integer"
           },
-          "use_queue": {
+          "use_lane": {
             "default": true,
-            "description": "Whether to use a named queue for serial execution",
+            "description": "Whether to use a named lane for serial execution",
             "type": "boolean"
           }
         },
@@ -589,9 +589,8 @@
           ],
           "tasks": [
             {
-              "cron_expression": "0 * * * *",
+              "cron": "0 * * * *",
               "name": "Task A",
-              "schedule_type": "cron",
               "url": "https://example.com/a"
             }
           ]
@@ -722,7 +721,7 @@
         "description": "A scheduled task",
         "example": {
           "body": "{\"action\": \"cleanup\"}",
-          "cron_expression": "0 0 * * *",
+          "cron": "0 0 * * *",
           "enabled": true,
           "headers": {
             "Content-Type": "application/json"
@@ -750,7 +749,7 @@
             "nullable": true,
             "type": "string"
           },
-          "cron_expression": {
+          "cron": {
             "description": "Cron expression (for cron tasks)",
             "nullable": true,
             "type": "string"
@@ -831,7 +830,7 @@
             ],
             "type": "string"
           },
-          "scheduled_at": {
+          "run_at": {
             "description": "Scheduled time (for one-time tasks)",
             "format": "date-time",
             "nullable": true,
@@ -865,10 +864,9 @@
       "TaskRequest": {
         "description": "Request body for creating or updating a task",
         "example": {
-          "cron_expression": "0 0 * * *",
+          "cron": "0 0 * * *",
           "method": "POST",
           "name": "Daily cleanup",
-          "schedule_type": "cron",
           "url": "https://example.com/api/cleanup"
         },
         "properties": {
@@ -882,8 +880,8 @@
             "nullable": true,
             "type": "string"
           },
-          "cron_expression": {
-            "description": "Required for cron tasks",
+          "cron": {
+            "description": "Cron expression for recurring tasks",
             "nullable": true,
             "type": "string"
           },
@@ -943,8 +941,8 @@
             ],
             "type": "string"
           },
-          "scheduled_at": {
-            "description": "Required for one-time tasks",
+          "run_at": {
+            "description": "ISO 8601 timestamp for one-time scheduled execution",
             "format": "date-time",
             "nullable": true,
             "type": "string"
@@ -1905,13 +1903,13 @@
     "/api/v1/tasks": {
       "get": {
         "callbacks": {},
-        "description": "Returns tasks for the authenticated organization with pagination. Optionally filter by queue name.",
+        "description": "Returns tasks for the authenticated organization with pagination. Optionally filter by lane name.",
         "operationId": "PrikkeWeb.Api.TaskController.index",
         "parameters": [
           {
-            "description": "Filter by queue name. Use \"none\" to get tasks without a queue.",
+            "description": "Filter by lane name. Use \"none\" to get tasks without a lane.",
             "in": "query",
-            "name": "queue",
+            "name": "lane",
             "required": false,
             "schema": {
               "type": "string"

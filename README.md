@@ -57,11 +57,11 @@ Set `NO_COLOR=1` environment variable to disable colors.
 ### Tasks
 ```
 POST   /api/v1/tasks                  Create task (immediate, delayed, scheduled, or cron)
-GET    /api/v1/tasks                  List tasks (filter: ?queue=name)
+GET    /api/v1/tasks                  List tasks (filter: ?lane=name)
 GET    /api/v1/tasks/{id}             Get task
 PUT    /api/v1/tasks/{id}             Update task
 DELETE /api/v1/tasks/{id}             Delete task
-DELETE /api/v1/tasks?queue=name       Cancel all tasks in a queue
+DELETE /api/v1/tasks?lane=name        Cancel all tasks in a lane
 POST   /api/v1/tasks/{id}/trigger     Trigger task execution
 GET    /api/v1/tasks/{id}/executions  List executions
 ```
@@ -82,11 +82,11 @@ GET    /api/v1/endpoints/{id}/events                  List inbound events
 POST   /api/v1/endpoints/{id}/events/{event_id}/replay  Replay an event
 ```
 
-### Queues
+### Lanes
 ```
-GET    /api/v1/queues                  List queues with pause status
-POST   /api/v1/queues/{name}/pause     Pause a queue
-POST   /api/v1/queues/{name}/resume    Resume a queue
+GET    /api/v1/lanes                   List lanes with pause status
+POST   /api/v1/lanes/{name}/pause      Pause a lane
+POST   /api/v1/lanes/{name}/resume     Resume a lane
 ```
 
 ### Monitors (Heartbeat / Dead Man's Switch)
@@ -150,7 +150,7 @@ curl -X POST http://localhost:8080/api/v1/tasks/batch \
   -d '{
     "url": "http://localhost:3000/api/process",
     "method": "POST",
-    "queue": "emails",
+    "lane": "emails",
     "items": [
       {"to": "user1@example.com"},
       {"to": "user2@example.com"},
@@ -173,19 +173,19 @@ curl -X POST http://localhost:8080/api/v1/monitors \
 curl http://localhost:8080/ping/{token}
 ```
 
-## Queue Management
+## Lane Management
 
-Pause and resume queues to control task processing:
+Pause and resume lanes to control task processing:
 
 ```bash
-# List queues
-curl http://localhost:8080/api/v1/queues
+# List lanes
+curl http://localhost:8080/api/v1/lanes
 
-# Pause a queue
-curl -X POST http://localhost:8080/api/v1/queues/emails/pause
+# Pause a lane
+curl -X POST http://localhost:8080/api/v1/lanes/emails/pause
 
-# Resume a queue
-curl -X POST http://localhost:8080/api/v1/queues/emails/resume
+# Resume a lane
+curl -X POST http://localhost:8080/api/v1/lanes/emails/resume
 ```
 
 ## Terminal Output

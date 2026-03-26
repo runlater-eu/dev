@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -12,17 +13,24 @@ func registerBatchRoutes(mux *http.ServeMux, store *Store, execCfg ExecutorConfi
 	mux.HandleFunc("POST /api/v1/tasks/batch", handleBatchCreate(store, execCfg))
 }
 
+type batchTask struct {
+	URL     string            `json:"url"`
+	Method  string            `json:"method"`
+	Headers map[string]string `json:"headers"`
+	Body    *string           `json:"body"`
+	Name    string            `json:"name"`
+}
+
 type batchCreateRequest struct {
-	URL           string            `json:"url"`
 	Method        string            `json:"method"`
 	Headers       map[string]string `json:"headers"`
-	Queue         string            `json:"queue"`
+	Lane          string            `json:"lane"`
 	RunAt         *string           `json:"run_at"`
 	Delay         interface{}       `json:"delay"`
 	RetryAttempts *int              `json:"retry_attempts"`
 	TimeoutMs     *int              `json:"timeout_ms"`
 	CallbackURL   *string           `json:"callback_url"`
-	Items         []json.RawMessage `json:"items"`
+	Tasks         []batchTask       `json:"tasks"`
 }
 
 func handleBatchCreate(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
@@ -33,26 +41,35 @@ func handleBatchCreate(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
 			return
 		}
 
-		if req.URL == "" {
-			writeError(w, 422, "validation_error", "url is required")
+		if req.Lane == "" {
+			writeError(w, 422, "validation_error", "lane is required")
 			return
 		}
-		if req.Queue == "" {
-			writeError(w, 422, "validation_error", "queue is required")
+		if len(req.Tasks) == 0 {
+			writeError(w, 422, "validation_error", "tasks is required and must not be empty")
 			return
 		}
-		if len(req.Items) == 0 {
-			writeError(w, 422, "validation_error", "items is required and must not be empty")
-			return
-		}
-		if len(req.Items) > 1000 {
-			writeError(w, 422, "validation_error", "items must not exceed 1000")
+		if len(req.Tasks) > 1000 {
+			writeError(w, 422, "validation_error", "tasks must not exceed 1000")
 			return
 		}
 
-		method := "POST"
+		// Validate each task has a valid URL
+		for i, t := range req.Tasks {
+			if t.URL == "" {
+				writeError(w, 422, "validation_error", fmt.Sprintf("task at index %d: url is required", i))
+				return
+			}
+			u, err := url.Parse(t.URL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				writeError(w, 422, "validation_error", fmt.Sprintf("task at index %d has an invalid url (must be HTTP or HTTPS)", i))
+				return
+			}
+		}
+
+		defaultMethod := "POST"
 		if req.Method != "" {
-			method = strings.ToUpper(req.Method)
+			defaultMethod = strings.ToUpper(req.Method)
 		}
 		timeoutMs := 30000
 		if req.TimeoutMs != nil {
@@ -83,31 +100,45 @@ func handleBatchCreate(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
 			scheduledFor = nowISO()
 		}
 
-		queue := req.Queue
+		lane := req.Lane
 		created := 0
 
-		for _, item := range req.Items {
-			bodyStr := string(item)
+		for _, bt := range req.Tasks {
+			method := defaultMethod
+			if bt.Method != "" {
+				method = strings.ToUpper(bt.Method)
+			}
+
+			headers := make(map[string]string)
+			for k, v := range req.Headers {
+				headers[k] = v
+			}
+			for k, v := range bt.Headers {
+				headers[k] = v
+			}
+
+			taskName := bt.Name
+			if taskName == "" {
+				taskName = fmt.Sprintf("Batch: %s", bt.URL)
+			}
+
 			now := nowISO()
 
 			task := &Task{
 				ID:            newTaskID(),
-				Name:          fmt.Sprintf("Batch: %s", req.URL),
-				URL:           req.URL,
+				Name:          taskName,
+				URL:           bt.URL,
 				Method:        method,
-				Headers:       req.Headers,
-				Body:          &bodyStr,
+				Headers:       headers,
+				Body:          bt.Body,
 				ScheduleType:  "once",
 				Enabled:       true,
 				TimeoutMs:     timeoutMs,
 				RetryAttempts: retryAttempts,
-				Queue:         &queue,
+				Lane:          &lane,
 				CallbackURL:   req.CallbackURL,
 				InsertedAt:    now,
 				UpdatedAt:     now,
-			}
-			if task.Headers == nil {
-				task.Headers = map[string]string{}
 			}
 
 			exec := &Execution{
@@ -124,11 +155,11 @@ func handleBatchCreate(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
 			created++
 		}
 
-		logInbound("POST", "/api/v1/tasks/batch", fmt.Sprintf("[%d tasks created in queue %q]", created, queue))
+		logInbound("POST", "/api/v1/tasks/batch", fmt.Sprintf("[%d tasks created in lane %q]", created, lane))
 
 		writeJSON(w, 201, map[string]interface{}{
 			"data": map[string]interface{}{
-				"queue":         queue,
+				"lane":          lane,
 				"created":       created,
 				"scheduled_for": scheduledFor,
 			},

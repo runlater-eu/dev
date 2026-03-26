@@ -14,12 +14,12 @@ type Task struct {
 	Headers             map[string]string `json:"headers"`
 	Body                *string           `json:"body"`
 	ScheduleType        string            `json:"schedule_type"`
-	CronExpression      *string           `json:"cron_expression"`
-	ScheduledAt         *string           `json:"scheduled_at"`
+	CronExpression      *string           `json:"cron"`
+	ScheduledAt         *string           `json:"run_at"`
 	Enabled             bool              `json:"enabled"`
 	TimeoutMs           int               `json:"timeout_ms"`
 	RetryAttempts       int               `json:"retry_attempts"`
-	Queue               *string           `json:"queue"`
+	Lane                *string           `json:"lane"`
 	CallbackURL         *string           `json:"callback_url"`
 	NotifyOnFailure     *bool             `json:"notify_on_failure"`
 	NotifyOnRecovery    *bool             `json:"notify_on_recovery"`
@@ -58,7 +58,7 @@ type Endpoint struct {
 	ForwardURLs      []string          `json:"forward_urls"`
 	Enabled          bool              `json:"enabled"`
 	RetryAttempts    int               `json:"retry_attempts"`
-	UseQueue         bool              `json:"use_queue"`
+	UseLane          bool              `json:"use_lane"`
 	Paused           bool              `json:"paused"`
 	NotifyOnFailure  *bool             `json:"notify_on_failure"`
 	NotifyOnRecovery *bool             `json:"notify_on_recovery"`
@@ -108,8 +108,10 @@ type Monitor struct {
 
 // MonitorPing represents a single ping received by a monitor.
 type MonitorPing struct {
-	ID         string `json:"id"`
-	ReceivedAt string `json:"received_at"`
+	ID         string  `json:"id"`
+	ReceivedAt string  `json:"received_at"`
+	Status     string  `json:"status"`
+	Message    *string `json:"message"`
 }
 
 // Store is a thread-safe in-memory store for all data.
@@ -126,7 +128,7 @@ type Store struct {
 	monitorOrder []string
 	monByTokens  map[string]string // pingToken -> monitorID
 	pings        map[string][]*MonitorPing // monitorID -> pings
-	pausedQueues map[string]bool // queue name -> paused
+	pausedLanes  map[string]bool // lane name -> paused
 }
 
 func NewStore() *Store {
@@ -139,7 +141,7 @@ func NewStore() *Store {
 		monitors:     make(map[string]*Monitor),
 		monByTokens:  make(map[string]string),
 		pings:        make(map[string][]*MonitorPing),
-		pausedQueues: make(map[string]bool),
+		pausedLanes:  make(map[string]bool),
 	}
 }
 
@@ -191,14 +193,14 @@ func (s *Store) DeleteTask(id string) bool {
 	return true
 }
 
-func (s *Store) DeleteTasksByQueue(queue string) int {
+func (s *Store) DeleteTasksByLane(lane string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	deleted := 0
 	var remaining []string
 	for _, id := range s.taskOrder {
 		t := s.tasks[id]
-		if t.Queue != nil && *t.Queue == queue {
+		if t.Lane != nil && *t.Lane == lane {
 			delete(s.tasks, id)
 			delete(s.executions, id)
 			deleted++
@@ -251,14 +253,14 @@ func (s *Store) UpdateExecution(taskID, execID string, fn func(*Execution)) {
 }
 
 // DeletePendingDebounced removes pending executions with the given debounce key
-// across all tasks in the given queue. Returns the number deleted.
-func (s *Store) DeletePendingDebounced(queue, debounceKey string) int {
+// across all tasks in the given lane. Returns the number deleted.
+func (s *Store) DeletePendingDebounced(lane, debounceKey string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	deleted := 0
 	for taskID, execs := range s.executions {
 		task := s.tasks[taskID]
-		if task == nil || task.Queue == nil || *task.Queue != queue {
+		if task == nil || task.Lane == nil || *task.Lane != lane {
 			continue
 		}
 		var kept []*Execution
@@ -456,39 +458,39 @@ func (s *Store) ListPings(monitorID string) []*MonitorPing {
 	return result
 }
 
-// Queue operations
+// Lane operations
 
-func (s *Store) PauseQueue(name string) {
+func (s *Store) PauseLane(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pausedQueues[name] = true
+	s.pausedLanes[name] = true
 }
 
-func (s *Store) ResumeQueue(name string) {
+func (s *Store) ResumeLane(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.pausedQueues, name)
+	delete(s.pausedLanes, name)
 }
 
-func (s *Store) IsQueuePaused(name string) bool {
+func (s *Store) IsLanePaused(name string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.pausedQueues[name]
+	return s.pausedLanes[name]
 }
 
-func (s *Store) ListQueues() map[string]bool {
+func (s *Store) ListLanes() map[string]bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	// Collect all queue names from tasks
-	queues := make(map[string]bool)
+	// Collect all lane names from tasks
+	lanes := make(map[string]bool)
 	for _, t := range s.tasks {
-		if t.Queue != nil && *t.Queue != "" {
-			queues[*t.Queue] = s.pausedQueues[*t.Queue]
+		if t.Lane != nil && *t.Lane != "" {
+			lanes[*t.Lane] = s.pausedLanes[*t.Lane]
 		}
 	}
-	// Also include explicitly paused queues
-	for name := range s.pausedQueues {
-		queues[name] = true
+	// Also include explicitly paused lanes
+	for name := range s.pausedLanes {
+		lanes[name] = true
 	}
-	return queues
+	return lanes
 }

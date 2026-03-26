@@ -18,7 +18,7 @@ func registerTaskRoutes(mux *http.ServeMux, store *Store, execCfg ExecutorConfig
 	mux.HandleFunc("GET /api/v1/tasks/{id}", handleGetTask(store))
 	mux.HandleFunc("PUT /api/v1/tasks/{id}", handleUpdateTask(store))
 	mux.HandleFunc("DELETE /api/v1/tasks/{id}", handleDeleteTask(store))
-	mux.HandleFunc("DELETE /api/v1/tasks", handleDeleteTasksByQueue(store))
+	mux.HandleFunc("DELETE /api/v1/tasks", handleDeleteTasksByLane(store))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/trigger", handleTriggerTask(store, execCfg))
 	mux.HandleFunc("GET /api/v1/tasks/{id}/executions", handleListExecutions(store))
 }
@@ -30,7 +30,7 @@ type taskCreateRequest struct {
 	Body                *string           `json:"body"`
 	TimeoutMs           *int              `json:"timeout_ms"`
 	RetryAttempts       *int              `json:"retry_attempts"`
-	Queue               *string           `json:"queue"`
+	Lane                *string           `json:"lane"`
 	CallbackURL         *string           `json:"callback_url"`
 	Cron                *string           `json:"cron"`
 	Delay               interface{}       `json:"delay"`
@@ -42,6 +42,8 @@ type taskCreateRequest struct {
 	ExpectedStatusCodes *string           `json:"expected_status_codes"`
 	ExpectedBodyPattern *string           `json:"expected_body_pattern"`
 	Script              *string           `json:"script"`
+	Debounce            interface{}       `json:"debounce"`
+	DebounceKey         *string           `json:"debounce_key"`
 }
 
 func handleCreateTask(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
@@ -54,6 +56,25 @@ func handleCreateTask(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
 
 		if req.URL == "" {
 			writeError(w, 422, "validation_error", "url is required")
+			return
+		}
+
+		// Debounce validation
+		hasDebounce := req.Debounce != nil
+		hasDebounceKey := req.DebounceKey != nil
+		hasLane := req.Lane != nil && *req.Lane != ""
+
+		if hasDebounce && (!hasDebounceKey || !hasLane) {
+			writeError(w, 400, "invalid_params", "debounce requires both debounce_key and lane")
+			return
+		}
+		if hasDebounceKey && !hasDebounce {
+			writeError(w, 400, "invalid_params", "debounce_key requires debounce")
+			return
+		}
+
+		if hasDebounce && hasDebounceKey && hasLane {
+			createDebouncedTask(w, store, &req, execCfg)
 			return
 		}
 
@@ -105,7 +126,7 @@ func createCronTask(w http.ResponseWriter, store *Store, req *taskCreateRequest)
 		Enabled:             enabled,
 		TimeoutMs:           timeoutMs,
 		RetryAttempts:       retryAttempts,
-		Queue:               req.Queue,
+		Lane:                req.Lane,
 		CallbackURL:         req.CallbackURL,
 		NotifyOnFailure:     req.NotifyOnFailure,
 		NotifyOnRecovery:    req.NotifyOnRecovery,
@@ -205,6 +226,41 @@ func createImmediateTask(w http.ResponseWriter, store *Store, req *taskCreateReq
 	})
 }
 
+func createDebouncedTask(w http.ResponseWriter, store *Store, req *taskCreateRequest, execCfg ExecutorConfig) {
+	debounceSec, err := parseDelay(req.Debounce)
+	if err != nil {
+		writeError(w, 400, "invalid_debounce", err.Error())
+		return
+	}
+
+	scheduledAt := time.Now().UTC().Add(time.Duration(debounceSec) * time.Second)
+	scheduledStr := scheduledAt.Format(time.RFC3339)
+
+	// Delete any existing pending execution with this debounce key
+	store.DeletePendingDebounced(*req.Lane, *req.DebounceKey)
+
+	task, exec := buildOnceTask(store, req, &scheduledStr)
+	exec.DebounceKey = req.DebounceKey
+	store.CreateTask(task)
+	store.AddExecution(task.ID, exec)
+
+	logInbound("POST", "/api/v1/tasks", fmt.Sprintf("[%s created, debounced %ds, key=%s]", task.ID, debounceSec, *req.DebounceKey))
+
+	// In dev emulator, execute immediately regardless of debounce
+	go executeTask(store, task, exec.ID, execCfg)
+
+	writeJSON(w, 202, map[string]interface{}{
+		"data": map[string]interface{}{
+			"task_id":       task.ID,
+			"execution_id":  exec.ID,
+			"status":        "pending",
+			"scheduled_for": exec.ScheduledFor,
+			"debounce_key":  *req.DebounceKey,
+		},
+		"message": "Task queued for execution",
+	})
+}
+
 func buildOnceTask(store *Store, req *taskCreateRequest, scheduledAt *string) (*Task, *Execution) {
 	now := nowISO()
 	method := "POST"
@@ -241,7 +297,7 @@ func buildOnceTask(store *Store, req *taskCreateRequest, scheduledAt *string) (*
 		Enabled:             true,
 		TimeoutMs:           timeoutMs,
 		RetryAttempts:       retryAttempts,
-		Queue:               req.Queue,
+		Lane:                req.Lane,
 		CallbackURL:         req.CallbackURL,
 		NotifyOnFailure:     req.NotifyOnFailure,
 		NotifyOnRecovery:    req.NotifyOnRecovery,
@@ -274,11 +330,11 @@ func handleListTasks(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tasks := store.ListTasks()
 
-		// Filter by queue if provided
-		if q := r.URL.Query().Get("queue"); q != "" {
+		// Filter by lane if provided
+		if l := r.URL.Query().Get("lane"); l != "" {
 			var filtered []*Task
 			for _, t := range tasks {
-				if t.Queue != nil && *t.Queue == q {
+				if t.Lane != nil && *t.Lane == l {
 					filtered = append(filtered, t)
 				}
 			}
@@ -384,8 +440,8 @@ func handleUpdateTask(store *Store) http.HandlerFunc {
 			if req.RetryAttempts != nil {
 				t.RetryAttempts = *req.RetryAttempts
 			}
-			if req.Queue != nil {
-				t.Queue = req.Queue
+			if req.Lane != nil {
+				t.Lane = req.Lane
 			}
 			if req.CallbackURL != nil {
 				t.CallbackURL = req.CallbackURL
@@ -430,24 +486,24 @@ func handleDeleteTask(store *Store) http.HandlerFunc {
 	}
 }
 
-func handleDeleteTasksByQueue(store *Store) http.HandlerFunc {
+func handleDeleteTasksByLane(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		queue := r.URL.Query().Get("queue")
-		if queue == "" {
-			writeError(w, 400, "invalid_params", "queue parameter is required")
+		lane := r.URL.Query().Get("lane")
+		if lane == "" {
+			writeError(w, 400, "invalid_params", "lane parameter is required")
 			return
 		}
 
-		deleted := store.DeleteTasksByQueue(queue)
+		deleted := store.DeleteTasksByLane(lane)
 
-		logInbound("DELETE", "/api/v1/tasks?queue="+queue, fmt.Sprintf("[%d deleted]", deleted))
+		logInbound("DELETE", "/api/v1/tasks?lane="+lane, fmt.Sprintf("[%d deleted]", deleted))
 
 		writeJSON(w, 200, map[string]interface{}{
 			"data": map[string]interface{}{
 				"deleted": deleted,
-				"queue":   queue,
+				"lane":    lane,
 			},
-			"message": fmt.Sprintf("Cancelled %d task(s) in queue %q", deleted, queue),
+			"message": fmt.Sprintf("Cancelled %d task(s) in lane %q", deleted, lane),
 		})
 	}
 }
@@ -531,12 +587,12 @@ func taskToJSON(t *Task) map[string]interface{} {
 		"headers":               t.Headers,
 		"body":                  t.Body,
 		"schedule_type":         t.ScheduleType,
-		"cron_expression":       t.CronExpression,
-		"scheduled_at":          t.ScheduledAt,
+		"cron":                  t.CronExpression,
+		"run_at":                t.ScheduledAt,
 		"enabled":               t.Enabled,
 		"timeout_ms":            t.TimeoutMs,
 		"retry_attempts":        t.RetryAttempts,
-		"queue":                 t.Queue,
+		"lane":                  t.Lane,
 		"callback_url":          t.CallbackURL,
 		"notify_on_failure":     t.NotifyOnFailure,
 		"notify_on_recovery":    t.NotifyOnRecovery,
@@ -565,6 +621,7 @@ func executionToJSON(e *Execution) map[string]interface{} {
 		"error_message": e.ErrorMessage,
 		"attempt":       e.Attempt,
 		"script_logs":   logs,
+		"debounce_key":  e.DebounceKey,
 	}
 }
 

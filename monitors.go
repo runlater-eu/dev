@@ -18,6 +18,8 @@ func registerMonitorRoutes(mux *http.ServeMux, store *Store, host string) {
 	// Public ping endpoints (no auth)
 	mux.HandleFunc("GET /ping/{token}", handlePing(store))
 	mux.HandleFunc("POST /ping/{token}", handlePing(store))
+	mux.HandleFunc("GET /ping/{token}/fail", handlePingFail(store))
+	mux.HandleFunc("POST /ping/{token}/fail", handlePingFail(store))
 }
 
 type monitorCreateRequest struct {
@@ -219,6 +221,8 @@ func handleListPings(store *Store) http.HandlerFunc {
 			data[i] = map[string]interface{}{
 				"id":          p.ID,
 				"received_at": p.ReceivedAt,
+				"status":      p.Status,
+				"message":     p.Message,
 			}
 		}
 
@@ -239,26 +243,64 @@ func handlePing(store *Store) http.HandlerFunc {
 			return
 		}
 
-		now := nowISO()
-		ping := &MonitorPing{
-			ID:         newPingID(),
-			ReceivedAt: now,
+		status := r.URL.Query().Get("status")
+		if status == "" {
+			status = "ok"
 		}
-		store.AddPing(m.ID, ping)
+		var msg *string
+		if m := r.URL.Query().Get("msg"); m != "" {
+			msg = &m
+		}
 
-		// Update monitor status
-		store.UpdateMonitor(m.ID, func(m *Monitor) {
-			m.Status = "up"
-			m.LastPingAt = &now
-			m.UpdatedAt = now
-		})
-
-		logInbound(r.Method, "/ping/"+token[:8]+"...", fmt.Sprintf("[%s pinged, status=up]", m.ID))
-
-		writeJSON(w, 200, map[string]interface{}{
-			"ok": true,
-		})
+		recordPing(store, w, r, m, token, status, msg)
 	}
+}
+
+func handlePingFail(store *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := r.PathValue("token")
+		m := store.GetMonitorByToken(token)
+		if m == nil {
+			writeError(w, 404, "not_found", "Monitor not found")
+			return
+		}
+
+		var msg *string
+		if m := r.URL.Query().Get("msg"); m != "" {
+			msg = &m
+		}
+
+		recordPing(store, w, r, m, token, "fail", msg)
+	}
+}
+
+func recordPing(store *Store, w http.ResponseWriter, r *http.Request, m *Monitor, token, status string, msg *string) {
+	now := nowISO()
+	ping := &MonitorPing{
+		ID:         newPingID(),
+		ReceivedAt: now,
+		Status:     status,
+		Message:    msg,
+	}
+	store.AddPing(m.ID, ping)
+
+	// Update monitor status
+	newStatus := "up"
+	if status == "fail" {
+		newStatus = "down"
+	}
+	store.UpdateMonitor(m.ID, func(m *Monitor) {
+		m.Status = newStatus
+		m.LastPingAt = &now
+		m.UpdatedAt = now
+	})
+
+	logInbound(r.Method, "/ping/"+token[:8]+"...", fmt.Sprintf("[%s pinged, status=%s]", m.ID, status))
+
+	writeJSON(w, 200, map[string]interface{}{
+		"status":  status,
+		"monitor": m.Name,
+	})
 }
 
 func monitorToJSON(m *Monitor) map[string]interface{} {

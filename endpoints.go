@@ -29,7 +29,7 @@ type endpointCreateRequest struct {
 	ForwardURL       string            `json:"forward_url"` // backward compat
 	Enabled          *bool             `json:"enabled"`
 	RetryAttempts    *int              `json:"retry_attempts"`
-	UseQueue         *bool             `json:"use_queue"`
+	UseLane          *bool             `json:"use_lane"`
 	Paused           *bool             `json:"paused"`
 	NotifyOnFailure  *bool             `json:"notify_on_failure"`
 	NotifyOnRecovery *bool             `json:"notify_on_recovery"`
@@ -78,9 +78,9 @@ func handleCreateEndpoint(store *Store, host string) http.HandlerFunc {
 		if req.RetryAttempts != nil {
 			retryAttempts = *req.RetryAttempts
 		}
-		useQueue := true
-		if req.UseQueue != nil {
-			useQueue = *req.UseQueue
+		useLane := true
+		if req.UseLane != nil {
+			useLane = *req.UseLane
 		}
 
 		// Check slug uniqueness
@@ -97,7 +97,7 @@ func handleCreateEndpoint(store *Store, host string) http.HandlerFunc {
 			ForwardURLs:      forwardURLs,
 			Enabled:          enabled,
 			RetryAttempts:    retryAttempts,
-			UseQueue:         useQueue,
+			UseLane:         useLane,
 			NotifyOnFailure:  req.NotifyOnFailure,
 			NotifyOnRecovery: req.NotifyOnRecovery,
 			Script:           req.Script,
@@ -144,8 +144,8 @@ func handleUpdateEndpoint(store *Store, host string) http.HandlerFunc {
 			if req.RetryAttempts != nil {
 				ep.RetryAttempts = *req.RetryAttempts
 			}
-			if req.UseQueue != nil {
-				ep.UseQueue = *req.UseQueue
+			if req.UseLane != nil {
+				ep.UseLane = *req.UseLane
 			}
 			if req.Paused != nil {
 				ep.Paused = *req.Paused
@@ -376,7 +376,7 @@ func handleInbound(store *Store, execCfg ExecutorConfig) http.HandlerFunc {
 		}
 
 		if !ep.Enabled {
-			writeJSON(w, 503, map[string]interface{}{
+			writeJSON(w, 410, map[string]interface{}{
 				"error": "Endpoint disabled",
 			})
 			return
@@ -436,7 +436,7 @@ func handlePauseEndpoint(store *Store) http.HandlerFunc {
 		}
 		store.UpdateEndpoint(id, func(ep *Endpoint) {
 			ep.Paused = true
-			ep.UseQueue = true
+			ep.UseLane = true
 			ep.UpdatedAt = nowISO()
 		})
 		ep = store.GetEndpoint(id)
@@ -482,7 +482,7 @@ func endpointToJSON(ep *Endpoint) map[string]interface{} {
 		"enabled":            ep.Enabled,
 		"paused":             ep.Paused,
 		"retry_attempts":     ep.RetryAttempts,
-		"use_queue":          ep.UseQueue,
+		"use_lane":          ep.UseLane,
 		"notify_on_failure":  ep.NotifyOnFailure,
 		"notify_on_recovery": ep.NotifyOnRecovery,
 		"script":             ep.Script,

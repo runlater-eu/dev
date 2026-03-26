@@ -90,8 +90,8 @@ func TestCreateCronTask(t *testing.T) {
 	if data["id"] == nil {
 		t.Error("expected id in response")
 	}
-	if data["cron_expression"] != "*/5 * * * *" {
-		t.Errorf("expected cron expression, got %v", data["cron_expression"])
+	if data["cron"] != "*/5 * * * *" {
+		t.Errorf("expected cron expression, got %v", data["cron"])
 	}
 	if data["name"] != "My Cron Job" {
 		t.Errorf("expected name My Cron Job, got %v", data["name"])
